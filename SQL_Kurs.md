@@ -9668,3 +9668,2381 @@ Eine zusätzliche spaltenweise Kopie bestimmter Spalten wird erstellt.
 
 
 
+# SQL Zusammenfassung – Teil 20: Table Partitioning
+
+## 1. Was ist Table Partitioning?
+
+`Table Partitioning` bedeutet, dass eine große Tabelle intern in kleinere Teile aufgeteilt wird.
+
+Diese Teile nennt man **Partitionen**.
+
+Für den Benutzer sieht es weiterhin wie **eine einzige Tabelle** aus.
+
+Intern kann die Datenbank die Daten aber besser verwalten und schneller auf bestimmte Bereiche zugreifen.
+
+---
+
+## 2. Warum verwendet man Partitioning?
+
+Partitioning wird vor allem bei sehr großen Tabellen verwendet.
+
+Typische Ziele:
+
+* bessere Performance bei großen Tabellen
+* schnellere Abfragen auf bestimmte Zeiträume
+* einfachere Verwaltung alter Daten
+* schnelleres Laden oder Löschen großer Datenmengen
+* bessere Wartung von großen Tabellen und Indexes
+
+---
+
+## 3. Einfaches Beispiel
+
+Eine Tabelle `verkaeufe` enthält Daten aus mehreren Jahren.
+
+| verkauf_id | datum      | betrag |
+| ---------- | ---------- | -----: |
+| 1          | 2022-03-10 |    100 |
+| 2          | 2023-07-15 |    250 |
+| 3          | 2024-01-20 |    300 |
+| 4          | 2025-05-05 |    150 |
+
+Die Tabelle kann nach Jahr partitioniert werden:
+
+| Partition   | Daten             |
+| ----------- | ----------------- |
+| Partition 1 | Verkäufe aus 2022 |
+| Partition 2 | Verkäufe aus 2023 |
+| Partition 3 | Verkäufe aus 2024 |
+| Partition 4 | Verkäufe aus 2025 |
+
+---
+
+# 4. Horizontal Partitioning
+
+Bei normalem Table Partitioning spricht man meistens von **Horizontal Partitioning**.
+
+Das bedeutet:
+
+Die Tabelle wird nach **Zeilen** aufgeteilt.
+
+Beispiel:
+
+```text
+Alle Verkäufe aus 2022 → Partition 1
+Alle Verkäufe aus 2023 → Partition 2
+Alle Verkäufe aus 2024 → Partition 3
+```
+
+Die Spalten bleiben gleich.
+
+Nur die Zeilen werden aufgeteilt.
+
+---
+
+# 5. Partition Key
+
+Der `Partition Key` ist die Spalte, nach der die Tabelle aufgeteilt wird.
+
+Typische Partition Keys:
+
+* Datum
+* Jahr
+* Monat
+* Region
+* Kundenbereich
+* Kategorie
+
+Beispiel:
+
+```sql
+datum
+```
+
+Wenn eine Tabelle nach `datum` partitioniert ist, entscheidet der Datumswert, in welche Partition eine Zeile gespeichert wird.
+
+---
+
+# 6. Partitioning nach Datum
+
+Sehr häufig wird nach Datum partitioniert.
+
+Beispiel:
+
+```sql
+verkaufsdatum
+```
+
+Mögliche Partitionen:
+
+| Partition | Bereich        |
+| --------- | -------------- |
+| P1        | Daten vor 2023 |
+| P2        | Daten aus 2023 |
+| P3        | Daten aus 2024 |
+| P4        | Daten aus 2025 |
+
+Das ist besonders nützlich für Tabellen wie:
+
+* Bestellungen
+* Verkäufe
+* Logs
+* Messwerte
+* Transaktionen
+
+---
+
+# 7. Partition Elimination
+
+`Partition Elimination` bedeutet, dass die Datenbank nur relevante Partitionen durchsucht.
+
+Beispiel:
+
+```sql
+SELECT *
+FROM verkaeufe
+WHERE verkaufsdatum >= '2024-01-01'
+AND verkaufsdatum < '2025-01-01';
+```
+
+Wenn die Tabelle nach `verkaufsdatum` partitioniert ist, muss die Datenbank im Idealfall nur die Partition für 2024 lesen.
+
+Sie muss nicht die Daten aus 2022, 2023 oder 2025 durchsuchen.
+
+---
+
+## 7.1 Wichtig für Partition Elimination
+
+Die Abfrage sollte direkt auf den Partition Key filtern.
+
+Gut:
+
+```sql
+WHERE verkaufsdatum >= '2024-01-01'
+AND verkaufsdatum < '2025-01-01'
+```
+
+Problematisch:
+
+```sql
+WHERE YEAR(verkaufsdatum) = 2024
+```
+
+Warum?
+
+Bei der zweiten Variante wird eine Funktion auf die Spalte angewendet.
+
+Dadurch kann die Datenbank Partition Elimination eventuell schlechter nutzen.
+
+---
+
+# 8. Partitioning in SQL Server
+
+In SQL Server verwendet man für Partitioning häufig:
+
+* `PARTITION FUNCTION`
+* `PARTITION SCHEME`
+* partitionierte Tabelle
+
+---
+
+## 8.1 Partition Function
+
+Die `PARTITION FUNCTION` definiert die Grenzen der Partitionen.
+
+Beispiel:
+
+```sql
+CREATE PARTITION FUNCTION pf_verkaeufe_jahr (DATE)
+AS RANGE RIGHT FOR VALUES
+(
+    '2023-01-01',
+    '2024-01-01',
+    '2025-01-01'
+);
+```
+
+### Erklärung
+
+Die Grenzwerte bestimmen, wo neue Partitionen beginnen.
+
+Mit `RANGE RIGHT` gehört der Grenzwert zur rechten Partition.
+
+Beispiel:
+
+| Bereich                              | Partition   |
+| ------------------------------------ | ----------- |
+| vor `2023-01-01`                     | Partition 1 |
+| ab `2023-01-01` bis vor `2024-01-01` | Partition 2 |
+| ab `2024-01-01` bis vor `2025-01-01` | Partition 3 |
+| ab `2025-01-01`                      | Partition 4 |
+
+---
+
+## 8.2 Partition Scheme
+
+Das `PARTITION SCHEME` legt fest, auf welchen Speicherbereichen die Partitionen liegen.
+
+Einfaches Beispiel:
+
+```sql
+CREATE PARTITION SCHEME ps_verkaeufe_jahr
+AS PARTITION pf_verkaeufe_jahr
+ALL TO ([PRIMARY]);
+```
+
+### Erklärung
+
+Hier werden alle Partitionen auf `[PRIMARY]` gespeichert.
+
+In größeren Systemen können Partitionen auch auf verschiedene Filegroups verteilt werden.
+
+---
+
+## 8.3 Partitionierte Tabelle erstellen
+
+```sql
+CREATE TABLE verkaeufe (
+    verkauf_id INT,
+    verkaufsdatum DATE,
+    betrag DECIMAL(10,2)
+)
+ON ps_verkaeufe_jahr (verkaufsdatum);
+```
+
+### Erklärung
+
+Die Tabelle `verkaeufe` wird anhand der Spalte `verkaufsdatum` partitioniert.
+
+---
+
+# 9. RANGE LEFT vs RANGE RIGHT
+
+Bei SQL Server gibt es `RANGE LEFT` und `RANGE RIGHT`.
+
+Sie bestimmen, zu welcher Partition der Grenzwert gehört.
+
+## RANGE RIGHT
+
+```sql
+AS RANGE RIGHT FOR VALUES ('2024-01-01')
+```
+
+Dann gehört `2024-01-01` zur rechten Partition.
+
+## RANGE LEFT
+
+```sql
+AS RANGE LEFT FOR VALUES ('2024-01-01')
+```
+
+Dann gehört `2024-01-01` zur linken Partition.
+
+### Merksatz
+
+Für Datumsbereiche wird oft `RANGE RIGHT` verwendet, weil ein neues Jahr oder ein neuer Monat sauber mit dem Grenzwert beginnt.
+
+---
+
+# 10. Beispiel: Monatliches Partitioning
+
+Eine große Log-Tabelle kann nach Monaten partitioniert werden.
+
+```sql
+CREATE PARTITION FUNCTION pf_logs_monat (DATE)
+AS RANGE RIGHT FOR VALUES
+(
+    '2024-01-01',
+    '2024-02-01',
+    '2024-03-01',
+    '2024-04-01'
+);
+```
+
+Dadurch entstehen Partitionen wie:
+
+| Partition | Bereich         |
+| --------- | --------------- |
+| P1        | vor Januar 2024 |
+| P2        | Januar 2024     |
+| P3        | Februar 2024    |
+| P4        | März 2024       |
+| P5        | ab April 2024   |
+
+---
+
+# 11. Partitioned Index
+
+Indexes können ebenfalls partitioniert sein.
+
+Wenn Tabelle und Index nach demselben Partition Key partitioniert sind, spricht man oft von einem **aligned index**.
+
+### Beispiel
+
+```sql
+CREATE INDEX idx_verkaeufe_datum
+ON verkaeufe (verkaufsdatum)
+ON ps_verkaeufe_jahr (verkaufsdatum);
+```
+
+### Vorteil
+
+Ein partitionierter Index kann Wartung und Abfragen auf großen Tabellen verbessern.
+
+---
+
+# 12. Partition Switching
+
+`Partition Switching` bedeutet, dass man eine ganze Partition sehr schnell austauschen oder verschieben kann.
+
+Das ist besonders nützlich für:
+
+* Archivierung
+* Laden neuer Monatsdaten
+* Entfernen alter Daten
+* ETL-Prozesse
+
+Beispielidee:
+
+```text
+Alte Partition aus Haupttabelle entfernen
+und in Archiv-Tabelle verschieben.
+```
+
+In SQL Server wird dafür häufig `ALTER TABLE ... SWITCH` verwendet.
+
+---
+
+# 13. Partitioning vs Index
+
+Partitioning und Indexes sind nicht dasselbe.
+
+| Konzept      | Bedeutung                                  |
+| ------------ | ------------------------------------------ |
+| Partitioning | teilt eine große Tabelle in kleinere Teile |
+| Index        | hilft, Daten schneller zu finden           |
+
+Eine Tabelle kann partitioniert sein und zusätzlich Indexes haben.
+
+### Beispiel
+
+Eine Tabelle `verkaeufe` kann:
+
+* nach `verkaufsdatum` partitioniert sein
+* einen Index auf `kunde_id` haben
+* einen Index auf `produkt_id` haben
+
+---
+
+# 14. Wann ist Partitioning sinnvoll?
+
+Partitioning ist sinnvoll, wenn:
+
+* die Tabelle sehr groß ist
+* Daten natürlich in Bereiche aufgeteilt werden können
+* oft nach dem Partition Key gefiltert wird
+* alte Daten regelmäßig archiviert oder gelöscht werden
+* große Datenmengen regelmäßig geladen werden
+* Reports oft auf bestimmte Zeiträume zugreifen
+
+Typische Tabellen:
+
+| Tabelle         | Partition Key       |
+| --------------- | ------------------- |
+| `verkaeufe`     | `verkaufsdatum`     |
+| `bestellungen`  | `bestelldatum`      |
+| `logs`          | `log_datum`         |
+| `messwerte`     | `messzeit`          |
+| `transaktionen` | `transaktionsdatum` |
+
+---
+
+# 15. Wann ist Partitioning nicht sinnvoll?
+
+Partitioning ist oft nicht sinnvoll, wenn:
+
+* die Tabelle klein ist
+* die Abfragen nicht nach dem Partition Key filtern
+* die Daten keinen klaren Bereich haben
+* die Verwaltung dadurch unnötig komplex wird
+* normale Indexes bereits ausreichend sind
+
+Beispiel:
+
+```sql
+SELECT *
+FROM verkaeufe
+WHERE kunde_id = 123;
+```
+
+Wenn die Tabelle nach `verkaufsdatum` partitioniert ist, aber die Abfrage nur nach `kunde_id` sucht, bringt Partitioning eventuell wenig.
+
+---
+
+# 16. Vorteile von Table Partitioning
+
+| Vorteil               | Erklärung                                                  |
+| --------------------- | ---------------------------------------------------------- |
+| Bessere Verwaltung    | große Tabellen werden logisch aufgeteilt                   |
+| Partition Elimination | irrelevante Partitionen werden übersprungen                |
+| Schnellere Wartung    | einzelne Partitionen können bearbeitet werden              |
+| Archivierung          | alte Daten können leichter verschoben werden               |
+| Datenladen            | neue Partitionen können vorbereitet und eingespielt werden |
+
+---
+
+# 17. Nachteile von Table Partitioning
+
+| Nachteil                    | Erklärung                                     |
+| --------------------------- | --------------------------------------------- |
+| Komplexität                 | Einrichtung und Wartung sind aufwendiger      |
+| Nicht automatisch schneller | bringt nur Vorteile bei passenden Abfragen    |
+| Falscher Partition Key      | kann Performance kaum verbessern              |
+| Index-Wartung               | partitionierte Indexes müssen gepflegt werden |
+| Kleine Tabellen             | profitieren meistens nicht                    |
+
+---
+
+# 18. Partitioning vs Sharding
+
+Partitioning und Sharding werden manchmal verwechselt.
+
+| Begriff      | Bedeutung                                       |
+| ------------ | ----------------------------------------------- |
+| Partitioning | Aufteilung innerhalb derselben Datenbank        |
+| Sharding     | Aufteilung über mehrere Datenbanken oder Server |
+
+### Merksatz
+
+Partitioning passiert meistens innerhalb einer Datenbank.
+
+Sharding verteilt Daten auf mehrere Systeme.
+
+---
+
+# 19. Praktisches Beispiel komplett
+
+```sql
+CREATE PARTITION FUNCTION pf_bestellungen_jahr (DATE)
+AS RANGE RIGHT FOR VALUES
+(
+    '2023-01-01',
+    '2024-01-01',
+    '2025-01-01'
+);
+
+CREATE PARTITION SCHEME ps_bestellungen_jahr
+AS PARTITION pf_bestellungen_jahr
+ALL TO ([PRIMARY]);
+
+CREATE TABLE bestellungen (
+    bestellung_id INT,
+    kunde_id INT,
+    bestelldatum DATE,
+    betrag DECIMAL(10,2)
+)
+ON ps_bestellungen_jahr (bestelldatum);
+```
+
+Abfrage:
+
+```sql
+SELECT *
+FROM bestellungen
+WHERE bestelldatum >= '2024-01-01'
+AND bestelldatum < '2025-01-01';
+```
+
+### Erklärung
+
+Dieser Befehl:
+
+* erstellt eine Partition Function,
+* erstellt ein Partition Scheme,
+* erstellt eine partitionierte Tabelle,
+* partitioniert die Tabelle nach `bestelldatum`,
+* ermöglicht bei passenden Filtern Partition Elimination.
+
+---
+
+# 20. Mini-Übersicht
+
+| Begriff                 | Bedeutung                                    |
+| ----------------------- | -------------------------------------------- |
+| `Partitioning`          | Aufteilen einer Tabelle in kleinere Teile    |
+| `Partition`             | einzelner Teil einer partitionierten Tabelle |
+| `Partition Key`         | Spalte, nach der partitioniert wird          |
+| `Partition Function`    | definiert die Grenzen der Partitionen        |
+| `Partition Scheme`      | legt Speicherort der Partitionen fest        |
+| `Partition Elimination` | Datenbank liest nur relevante Partitionen    |
+| `Partition Switching`   | schnelles Austauschen ganzer Partitionen     |
+
+---
+
+# 21. Entscheidungsregel
+
+| Frage                                         | Empfehlung                          |
+| --------------------------------------------- | ----------------------------------- |
+| Ist die Tabelle sehr groß?                    | Partitioning kann sinnvoll sein     |
+| Gibt es einen klaren Zeitbezug?               | Partitioning nach Datum ist oft gut |
+| Werden oft bestimmte Zeiträume abgefragt?     | Partitioning kann helfen            |
+| Werden alte Daten regelmäßig archiviert?      | Partitioning ist sehr nützlich      |
+| Wird selten nach dem Partition Key gefiltert? | Partitioning bringt wenig           |
+| Ist die Tabelle klein?                        | normale Indexes reichen meistens    |
+
+---
+
+# 22. Merksätze
+
+* Table Partitioning teilt große Tabellen intern in kleinere Teile.
+* Für Benutzer sieht es weiterhin wie eine Tabelle aus.
+* Der Partition Key entscheidet, in welche Partition eine Zeile kommt.
+* Häufig wird nach Datum partitioniert.
+* Partition Elimination kann Abfragen schneller machen.
+* Partitioning ist nicht automatisch schneller.
+* Partitioning hilft nur, wenn Abfragen den Partition Key sinnvoll nutzen.
+* Partitioning ist besonders nützlich für sehr große Tabellen, Archivierung und Data Warehousing.
+* Indexes und Partitioning ergänzen sich.
+* Sharding ist nicht dasselbe wie Partitioning.
+
+
+# SQL Zusammenfassung – Teil 21: Stored Procedures
+
+## 1. Was ist eine Stored Procedure?
+
+Eine `Stored Procedure` ist ein gespeicherter SQL-Codeblock in der Datenbank.
+
+Sie kann mehrere SQL-Befehle enthalten und später wieder ausgeführt werden.
+
+Man kann sich eine Stored Procedure wie eine Funktion oder ein Programm in der Datenbank vorstellen.
+
+---
+
+## 2. Warum verwendet man Stored Procedures?
+
+Stored Procedures werden verwendet, um:
+
+* wiederkehrende SQL-Logik zu speichern
+* komplexe Abläufe zu kapseln
+* Parameter zu verwenden
+* Daten zu lesen, einzufügen, zu ändern oder zu löschen
+* Business-Logik zentral in der Datenbank abzulegen
+* Sicherheit und Rechte besser zu kontrollieren
+
+---
+
+## 3. Allgemeine Struktur
+
+```sql
+CREATE PROCEDURE procedure_name
+AS
+BEGIN
+    -- SQL-Befehle
+END;
+```
+
+---
+
+## 4. Einfaches Beispiel
+
+```sql
+CREATE PROCEDURE get_all_customers
+AS
+BEGIN
+    SELECT *
+    FROM kunden;
+END;
+```
+
+Procedure ausführen:
+
+```sql
+EXEC get_all_customers;
+```
+
+oder:
+
+```sql
+EXECUTE get_all_customers;
+```
+
+---
+
+## 5. Stored Procedure mit Parameter
+
+Parameter machen eine Stored Procedure flexibler.
+
+### Beispiel
+
+```sql
+CREATE PROCEDURE get_customers_by_city
+    @stadt VARCHAR(100)
+AS
+BEGIN
+    SELECT *
+    FROM kunden
+    WHERE stadt = @stadt;
+END;
+```
+
+Procedure ausführen:
+
+```sql
+EXEC get_customers_by_city @stadt = 'Düsseldorf';
+```
+
+### Erklärung
+
+* `@stadt` ist ein Parameter.
+* Beim Ausführen wird ein konkreter Wert übergeben.
+* Die Procedure gibt nur Kunden aus dieser Stadt zurück.
+
+---
+
+## 6. Stored Procedure mit mehreren Parametern
+
+```sql
+CREATE PROCEDURE get_customers_by_city_and_status
+    @stadt VARCHAR(100),
+    @status VARCHAR(50)
+AS
+BEGIN
+    SELECT *
+    FROM kunden
+    WHERE stadt = @stadt
+    AND status = @status;
+END;
+```
+
+Ausführen:
+
+```sql
+EXEC get_customers_by_city_and_status
+    @stadt = 'Köln',
+    @status = 'Aktiv';
+```
+
+---
+
+## 7. Stored Procedure mit INSERT
+
+Stored Procedures können auch Daten einfügen.
+
+```sql
+CREATE PROCEDURE insert_customer
+    @name VARCHAR(100),
+    @email VARCHAR(100),
+    @stadt VARCHAR(100)
+AS
+BEGIN
+    INSERT INTO kunden (name, email, stadt)
+    VALUES (@name, @email, @stadt);
+END;
+```
+
+Ausführen:
+
+```sql
+EXEC insert_customer
+    @name = 'Ali',
+    @email = 'ali@example.com',
+    @stadt = 'Düsseldorf';
+```
+
+---
+
+## 8. Stored Procedure mit UPDATE
+
+```sql
+CREATE PROCEDURE update_customer_city
+    @kunden_id INT,
+    @neue_stadt VARCHAR(100)
+AS
+BEGIN
+    UPDATE kunden
+    SET stadt = @neue_stadt
+    WHERE kunden_id = @kunden_id;
+END;
+```
+
+Ausführen:
+
+```sql
+EXEC update_customer_city
+    @kunden_id = 1,
+    @neue_stadt = 'Hamburg';
+```
+
+---
+
+## 9. Stored Procedure mit DELETE
+
+```sql
+CREATE PROCEDURE delete_customer
+    @kunden_id INT
+AS
+BEGIN
+    DELETE FROM kunden
+    WHERE kunden_id = @kunden_id;
+END;
+```
+
+Ausführen:
+
+```sql
+EXEC delete_customer @kunden_id = 1;
+```
+
+### Wichtig
+
+Bei `UPDATE` und `DELETE` sollte fast immer eine `WHERE`-Bedingung verwendet werden.
+
+---
+
+## 10. Output Parameter
+
+Eine Stored Procedure kann auch Werte zurückgeben.
+
+Dafür kann man `OUTPUT`-Parameter verwenden.
+
+### Beispiel
+
+```sql
+CREATE PROCEDURE get_customer_count
+    @anzahl INT OUTPUT
+AS
+BEGIN
+    SELECT @anzahl = COUNT(*)
+    FROM kunden;
+END;
+```
+
+Ausführen:
+
+```sql
+DECLARE @result INT;
+
+EXEC get_customer_count @anzahl = @result OUTPUT;
+
+SELECT @result AS anzahl_kunden;
+```
+
+### Erklärung
+
+* `@anzahl` ist ein Output-Parameter.
+* Das Ergebnis wird in `@result` gespeichert.
+* Danach kann der Wert mit `SELECT` angezeigt werden.
+
+---
+
+## 11. RETURN-Wert
+
+Eine Stored Procedure kann auch einen `RETURN`-Wert zurückgeben.
+
+Dieser wird meistens für Statuscodes verwendet.
+
+```sql
+CREATE PROCEDURE check_customer_exists
+    @kunden_id INT
+AS
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM kunden
+        WHERE kunden_id = @kunden_id
+    )
+        RETURN 1;
+    ELSE
+        RETURN 0;
+END;
+```
+
+Ausführen:
+
+```sql
+DECLARE @status INT;
+
+EXEC @status = check_customer_exists @kunden_id = 1;
+
+SELECT @status AS status;
+```
+
+### Merksatz
+
+* `OUTPUT` wird für echte Ergebniswerte verwendet.
+* `RETURN` wird oft für Statuscodes verwendet.
+
+---
+
+## 12. Variablen in Stored Procedures
+
+In Stored Procedures kann man Variablen deklarieren.
+
+```sql
+CREATE PROCEDURE calculate_average_revenue
+AS
+BEGIN
+    DECLARE @avg_umsatz DECIMAL(10,2);
+
+    SELECT @avg_umsatz = AVG(umsatz)
+    FROM kunden;
+
+    SELECT @avg_umsatz AS durchschnittsumsatz;
+END;
+```
+
+---
+
+## 13. IF ELSE in Stored Procedures
+
+```sql
+CREATE PROCEDURE check_revenue
+    @kunden_id INT
+AS
+BEGIN
+    DECLARE @umsatz DECIMAL(10,2);
+
+    SELECT @umsatz = umsatz
+    FROM kunden
+    WHERE kunden_id = @kunden_id;
+
+    IF @umsatz >= 1000
+        SELECT 'VIP Kunde' AS status;
+    ELSE
+        SELECT 'Normaler Kunde' AS status;
+END;
+```
+
+---
+
+## 14. Stored Procedure mit Transaction
+
+Bei wichtigen Änderungen kann man eine Transaction verwenden.
+
+```sql
+CREATE PROCEDURE transfer_money
+    @from_account INT,
+    @to_account INT,
+    @amount DECIMAL(10,2)
+AS
+BEGIN
+    BEGIN TRANSACTION;
+
+    UPDATE konten
+    SET kontostand = kontostand - @amount
+    WHERE konto_id = @from_account;
+
+    UPDATE konten
+    SET kontostand = kontostand + @amount
+    WHERE konto_id = @to_account;
+
+    COMMIT TRANSACTION;
+END;
+```
+
+### Erklärung
+
+Beide Updates gehören zusammen.
+
+Wenn ein Fehler passiert, sollte man normalerweise mit `ROLLBACK` zurückrollen.
+
+---
+
+## 15. Stored Procedure mit TRY CATCH
+
+In SQL Server kann man Fehler mit `TRY CATCH` behandeln.
+
+```sql
+CREATE PROCEDURE transfer_money_safe
+    @from_account INT,
+    @to_account INT,
+    @amount DECIMAL(10,2)
+AS
+BEGIN
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        UPDATE konten
+        SET kontostand = kontostand - @amount
+        WHERE konto_id = @from_account;
+
+        UPDATE konten
+        SET kontostand = kontostand + @amount
+        WHERE konto_id = @to_account;
+
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        ROLLBACK TRANSACTION;
+
+        SELECT ERROR_MESSAGE() AS fehler;
+    END CATCH;
+END;
+```
+
+---
+
+## 16. ALTER PROCEDURE
+
+Mit `ALTER PROCEDURE` kann man eine bestehende Stored Procedure ändern.
+
+```sql
+ALTER PROCEDURE get_customers_by_city
+    @stadt VARCHAR(100)
+AS
+BEGIN
+    SELECT kunden_id, name, email, stadt
+    FROM kunden
+    WHERE stadt = @stadt;
+END;
+```
+
+---
+
+## 17. DROP PROCEDURE
+
+Mit `DROP PROCEDURE` löscht man eine Stored Procedure.
+
+```sql
+DROP PROCEDURE get_customers_by_city;
+```
+
+Mit Sicherheitsprüfung:
+
+```sql
+DROP PROCEDURE IF EXISTS get_customers_by_city;
+```
+
+---
+
+## 18. Stored Procedure vs View vs Function
+
+| Objekt             | Zweck                                            |
+| ------------------ | ------------------------------------------------ |
+| `View`             | gespeicherte SELECT-Abfrage                      |
+| `Function`         | gibt einen Wert oder eine Tabelle zurück         |
+| `Stored Procedure` | führt einen Ablauf mit mehreren SQL-Befehlen aus |
+
+### Wann Stored Procedure?
+
+Verwende eine Stored Procedure, wenn:
+
+* mehrere SQL-Schritte ausgeführt werden sollen
+* Daten geändert werden sollen
+* Parameter gebraucht werden
+* Transactions oder Fehlerbehandlung nötig sind
+* ein Prozess automatisiert werden soll
+
+---
+
+## 19. Vorteile von Stored Procedures
+
+| Vorteil              | Erklärung                                                          |
+| -------------------- | ------------------------------------------------------------------ |
+| Wiederverwendbarkeit | SQL-Code muss nicht jedes Mal neu geschrieben werden               |
+| Struktur             | komplexe Abläufe werden gekapselt                                  |
+| Sicherheit           | Benutzer können Procedure ausführen, ohne direkten Tabellenzugriff |
+| Wartbarkeit          | Änderungen werden zentral in der Procedure gemacht                 |
+| Parameter            | flexible Eingaben sind möglich                                     |
+
+---
+
+## 20. Nachteile von Stored Procedures
+
+| Nachteil      | Erklärung                                             |
+| ------------- | ----------------------------------------------------- |
+| Komplexität   | Logik in der Datenbank kann schwerer zu debuggen sein |
+| Abhängigkeit  | Syntax hängt stark vom Datenbanksystem ab             |
+| Wartung       | viele Procedures können unübersichtlich werden        |
+| Versionierung | Änderungen müssen sauber dokumentiert werden          |
+
+---
+
+## 21. Häufige Fehler
+
+### 21.1 WHERE bei UPDATE oder DELETE vergessen
+
+Problematisch:
+
+```sql
+UPDATE kunden
+SET status = 'Inaktiv';
+```
+
+Besser:
+
+```sql
+UPDATE kunden
+SET status = 'Inaktiv'
+WHERE kunden_id = @kunden_id;
+```
+
+---
+
+### 21.2 Parameter ohne Datentyp
+
+Falsch:
+
+```sql
+CREATE PROCEDURE get_customer
+    @kunden_id
+AS
+BEGIN
+    SELECT *
+    FROM kunden
+    WHERE kunden_id = @kunden_id;
+END;
+```
+
+Richtig:
+
+```sql
+CREATE PROCEDURE get_customer
+    @kunden_id INT
+AS
+BEGIN
+    SELECT *
+    FROM kunden
+    WHERE kunden_id = @kunden_id;
+END;
+```
+
+---
+
+### 21.3 OUTPUT vergessen
+
+Problematisch:
+
+```sql
+EXEC get_customer_count @anzahl = @result;
+```
+
+Richtig:
+
+```sql
+EXEC get_customer_count @anzahl = @result OUTPUT;
+```
+
+---
+
+## 22. Praktisches Komplettbeispiel
+
+```sql
+CREATE PROCEDURE create_customer_order
+    @kunden_id INT,
+    @produkt_id INT,
+    @menge INT
+AS
+BEGIN
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        INSERT INTO bestellungen (kunden_id, bestelldatum)
+        VALUES (@kunden_id, GETDATE());
+
+        DECLARE @bestellung_id INT;
+
+        SET @bestellung_id = SCOPE_IDENTITY();
+
+        INSERT INTO bestellpositionen (bestellung_id, produkt_id, menge)
+        VALUES (@bestellung_id, @produkt_id, @menge);
+
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        ROLLBACK TRANSACTION;
+
+        SELECT ERROR_MESSAGE() AS fehler;
+    END CATCH;
+END;
+```
+
+Ausführen:
+
+```sql
+EXEC create_customer_order
+    @kunden_id = 1,
+    @produkt_id = 10,
+    @menge = 2;
+```
+
+### Erklärung
+
+Diese Procedure:
+
+* erstellt eine neue Bestellung,
+* speichert die neue `bestellung_id`,
+* fügt eine Bestellposition hinzu,
+* verwendet eine Transaction,
+* führt bei Fehlern ein `ROLLBACK` aus.
+
+---
+
+## 23. Mini-Übersicht
+
+| Befehl              | Bedeutung                        |
+| ------------------- | -------------------------------- |
+| `CREATE PROCEDURE`  | erstellt eine Stored Procedure   |
+| `ALTER PROCEDURE`   | ändert eine Stored Procedure     |
+| `DROP PROCEDURE`    | löscht eine Stored Procedure     |
+| `EXEC` / `EXECUTE`  | führt eine Stored Procedure aus  |
+| `OUTPUT`            | gibt Werte über Parameter zurück |
+| `RETURN`            | gibt einen Statuswert zurück     |
+| `BEGIN TRANSACTION` | startet eine Transaction         |
+| `COMMIT`            | bestätigt Änderungen             |
+| `ROLLBACK`          | macht Änderungen rückgängig      |
+
+---
+
+## 24. Merksätze
+
+* Eine Stored Procedure ist gespeicherter SQL-Code.
+* Stored Procedures können Parameter haben.
+* Sie können `SELECT`, `INSERT`, `UPDATE` und `DELETE` enthalten.
+* Sie sind gut für wiederkehrende und komplexe Abläufe.
+* Mit `EXEC` führt man eine Stored Procedure aus.
+* Mit `OUTPUT` können Werte zurückgegeben werden.
+* Mit `TRY CATCH` kann man Fehler behandeln.
+* Mit Transactions kann man mehrere Änderungen sicher zusammen ausführen.
+* Stored Procedures sind besonders nützlich für Prozesse, die regelmäßig ausgeführt werden.
+
+
+
+
+# SQL Zusammenfassung – Teil 22: Triggers
+
+## 1. Was ist ein Trigger?
+
+Ein `Trigger` ist ein SQL-Codeblock, der automatisch ausgeführt wird, wenn ein bestimmtes Ereignis in der Datenbank passiert.
+
+Typische Ereignisse sind:
+
+* `INSERT`
+* `UPDATE`
+* `DELETE`
+
+Man kann sich einen Trigger wie eine automatische Reaktion der Datenbank vorstellen.
+
+Beispiel:
+
+```text
+Wenn ein Kunde gelöscht wird,
+dann speichere automatisch einen Eintrag in einer Log-Tabelle.
+```
+
+---
+
+## 2. Warum verwendet man Trigger?
+
+Triggers werden verwendet für:
+
+* automatische Protokollierung
+* Audit-Logs
+* automatische Prüfungen
+* automatische Aktualisierung anderer Tabellen
+* Schutz vor unerlaubten Änderungen
+* Historisierung von Daten
+
+---
+
+## 3. Arten von Triggern
+
+| Trigger-Art          | Bedeutung                                                        |
+| -------------------- | ---------------------------------------------------------------- |
+| `AFTER Trigger`      | wird nach `INSERT`, `UPDATE` oder `DELETE` ausgeführt            |
+| `INSTEAD OF Trigger` | ersetzt die eigentliche Aktion                                   |
+| `DDL Trigger`        | reagiert auf Strukturänderungen, z. B. `CREATE`, `ALTER`, `DROP` |
+
+In der Praxis sind besonders `AFTER` und `INSTEAD OF` wichtig.
+
+---
+
+# 4. AFTER Trigger
+
+Ein `AFTER Trigger` wird ausgeführt, nachdem eine Aktion erfolgreich passiert ist.
+
+Beispiel:
+
+* Zeile wird eingefügt
+* danach startet der Trigger
+
+---
+
+## 4.1 AFTER INSERT Trigger
+
+```sql
+CREATE TRIGGER trg_after_insert_kunden
+ON kunden
+AFTER INSERT
+AS
+BEGIN
+    INSERT INTO kunden_log (kunden_id, aktion, datum)
+    SELECT
+        kunden_id,
+        'INSERT',
+        GETDATE()
+    FROM inserted;
+END;
+```
+
+### Erklärung
+
+Dieser Trigger wird ausgeführt, wenn neue Kunden eingefügt werden.
+
+Die Tabelle `inserted` enthält die neu eingefügten Zeilen.
+
+---
+
+## 4.2 AFTER UPDATE Trigger
+
+```sql
+CREATE TRIGGER trg_after_update_kunden
+ON kunden
+AFTER UPDATE
+AS
+BEGIN
+    INSERT INTO kunden_log (kunden_id, aktion, datum)
+    SELECT
+        kunden_id,
+        'UPDATE',
+        GETDATE()
+    FROM inserted;
+END;
+```
+
+### Erklärung
+
+Dieser Trigger wird ausgeführt, wenn Kundendaten geändert werden.
+
+Die Tabelle `inserted` enthält die neuen Werte nach dem Update.
+
+---
+
+## 4.3 AFTER DELETE Trigger
+
+```sql
+CREATE TRIGGER trg_after_delete_kunden
+ON kunden
+AFTER DELETE
+AS
+BEGIN
+    INSERT INTO kunden_log (kunden_id, aktion, datum)
+    SELECT
+        kunden_id,
+        'DELETE',
+        GETDATE()
+    FROM deleted;
+END;
+```
+
+### Erklärung
+
+Dieser Trigger wird ausgeführt, wenn Kunden gelöscht werden.
+
+Die Tabelle `deleted` enthält die gelöschten Zeilen.
+
+---
+
+# 5. inserted und deleted Tabellen
+
+In SQL Server gibt es bei Triggern zwei wichtige temporäre Tabellen:
+
+| Tabelle    | Bedeutung          |
+| ---------- | ------------------ |
+| `inserted` | enthält neue Werte |
+| `deleted`  | enthält alte Werte |
+
+---
+
+## 5.1 Verhalten bei INSERT
+
+| Aktion   | inserted    | deleted |
+| -------- | ----------- | ------- |
+| `INSERT` | neue Zeilen | leer    |
+
+---
+
+## 5.2 Verhalten bei DELETE
+
+| Aktion   | inserted | deleted          |
+| -------- | -------- | ---------------- |
+| `DELETE` | leer     | gelöschte Zeilen |
+
+---
+
+## 5.3 Verhalten bei UPDATE
+
+| Aktion   | inserted   | deleted    |
+| -------- | ---------- | ---------- |
+| `UPDATE` | neue Werte | alte Werte |
+
+Bei einem `UPDATE` passiert intern vereinfacht:
+
+```text
+Alte Version wird gelöscht
+Neue Version wird eingefügt
+```
+
+Deshalb gibt es bei `UPDATE` beide Tabellen.
+
+---
+
+# 6. Beispiel: Alte und neue Werte speichern
+
+```sql
+CREATE TRIGGER trg_update_email_log
+ON kunden
+AFTER UPDATE
+AS
+BEGIN
+    INSERT INTO kunden_email_log (
+        kunden_id,
+        alte_email,
+        neue_email,
+        geaendert_am
+    )
+    SELECT
+        d.kunden_id,
+        d.email AS alte_email,
+        i.email AS neue_email,
+        GETDATE()
+    FROM deleted d
+    INNER JOIN inserted i
+    ON d.kunden_id = i.kunden_id
+    WHERE d.email <> i.email;
+END;
+```
+
+### Erklärung
+
+Dieser Trigger speichert Änderungen an der E-Mail-Adresse.
+
+| Tabelle    | Bedeutung  |
+| ---------- | ---------- |
+| `deleted`  | alte Werte |
+| `inserted` | neue Werte |
+
+---
+
+# 7. INSTEAD OF Trigger
+
+Ein `INSTEAD OF Trigger` wird anstelle der eigentlichen Aktion ausgeführt.
+
+Das bedeutet:
+
+* Die ursprüngliche Aktion wird nicht direkt ausgeführt.
+* Der Trigger entscheidet, was passiert.
+
+---
+
+## 7.1 Beispiel: DELETE verhindern
+
+```sql
+CREATE TRIGGER trg_prevent_delete_kunden
+ON kunden
+INSTEAD OF DELETE
+AS
+BEGIN
+    PRINT 'Kunden dürfen nicht gelöscht werden.';
+END;
+```
+
+### Erklärung
+
+Wenn jemand versucht, einen Kunden zu löschen, wird der Löschvorgang verhindert.
+
+---
+
+## 7.2 Beispiel: Soft Delete
+
+Statt eine Zeile wirklich zu löschen, kann man sie als gelöscht markieren.
+
+```sql
+CREATE TRIGGER trg_soft_delete_kunden
+ON kunden
+INSTEAD OF DELETE
+AS
+BEGIN
+    UPDATE kunden
+    SET geloescht = 1
+    WHERE kunden_id IN (
+        SELECT kunden_id
+        FROM deleted
+    );
+END;
+```
+
+### Erklärung
+
+Der Kunde wird nicht wirklich gelöscht.
+
+Stattdessen wird die Spalte `geloescht` auf `1` gesetzt.
+
+---
+
+# 8. Trigger für mehrere Aktionen
+
+Ein Trigger kann auch auf mehrere Aktionen reagieren.
+
+```sql
+CREATE TRIGGER trg_kunden_changes
+ON kunden
+AFTER INSERT, UPDATE, DELETE
+AS
+BEGIN
+    INSERT INTO audit_log (tabelle, aktion, datum)
+    VALUES ('kunden', 'Änderung', GETDATE());
+END;
+```
+
+### Hinweis
+
+Wenn man genau unterscheiden möchte, ob es `INSERT`, `UPDATE` oder `DELETE` war, muss man `inserted` und `deleted` prüfen.
+
+---
+
+# 9. Aktion im Trigger erkennen
+
+```sql
+CREATE TRIGGER trg_kunden_audit
+ON kunden
+AFTER INSERT, UPDATE, DELETE
+AS
+BEGIN
+    IF EXISTS (SELECT 1 FROM inserted)
+       AND EXISTS (SELECT 1 FROM deleted)
+    BEGIN
+        INSERT INTO audit_log (aktion, datum)
+        VALUES ('UPDATE', GETDATE());
+    END
+    ELSE IF EXISTS (SELECT 1 FROM inserted)
+    BEGIN
+        INSERT INTO audit_log (aktion, datum)
+        VALUES ('INSERT', GETDATE());
+    END
+    ELSE IF EXISTS (SELECT 1 FROM deleted)
+    BEGIN
+        INSERT INTO audit_log (aktion, datum)
+        VALUES ('DELETE', GETDATE());
+    END
+END;
+```
+
+---
+
+# 10. DDL Trigger
+
+Ein `DDL Trigger` reagiert auf Änderungen an der Datenbankstruktur.
+
+Beispiele:
+
+* `CREATE TABLE`
+* `ALTER TABLE`
+* `DROP TABLE`
+* `CREATE PROCEDURE`
+* `DROP VIEW`
+
+### Beispiel
+
+```sql
+CREATE TRIGGER trg_prevent_drop_table
+ON DATABASE
+FOR DROP_TABLE
+AS
+BEGIN
+    PRINT 'Tabellen dürfen nicht gelöscht werden.';
+    ROLLBACK;
+END;
+```
+
+### Erklärung
+
+Dieser Trigger verhindert das Löschen von Tabellen.
+
+---
+
+# 11. Trigger ändern
+
+Mit `ALTER TRIGGER` kann man einen bestehenden Trigger ändern.
+
+```sql
+ALTER TRIGGER trg_after_insert_kunden
+ON kunden
+AFTER INSERT
+AS
+BEGIN
+    INSERT INTO kunden_log (kunden_id, aktion, datum)
+    SELECT
+        kunden_id,
+        'NEUER KUNDE',
+        GETDATE()
+    FROM inserted;
+END;
+```
+
+---
+
+# 12. Trigger löschen
+
+```sql
+DROP TRIGGER trg_after_insert_kunden;
+```
+
+---
+
+# 13. Trigger deaktivieren und aktivieren
+
+In SQL Server kann man Trigger deaktivieren.
+
+## Trigger deaktivieren
+
+```sql
+DISABLE TRIGGER trg_after_insert_kunden
+ON kunden;
+```
+
+## Trigger aktivieren
+
+```sql
+ENABLE TRIGGER trg_after_insert_kunden
+ON kunden;
+```
+
+---
+
+# 14. Trigger vs Stored Procedure
+
+| Stored Procedure                   | Trigger                              |
+| ---------------------------------- | ------------------------------------ |
+| wird manuell mit `EXEC` ausgeführt | wird automatisch ausgeführt          |
+| braucht direkten Aufruf            | reagiert auf Ereignisse              |
+| gut für Prozesse                   | gut für automatische Reaktionen      |
+| Parameter möglich                  | keine normalen Eingabeparameter      |
+| kontrollierter Ablauf              | kann versteckt im Hintergrund laufen |
+
+---
+
+# 15. Wann verwende ich Trigger?
+
+Verwende Trigger, wenn:
+
+* automatisch auf Datenänderungen reagiert werden soll
+* Änderungen protokolliert werden müssen
+* alte Werte gespeichert werden sollen
+* Daten historisiert werden sollen
+* eine Aktion verhindert oder ersetzt werden soll
+* Audit-Logs gebraucht werden
+
+---
+
+# 16. Wann sollte man vorsichtig sein?
+
+Triggers können problematisch sein, wenn sie zu viel Logik enthalten.
+
+Nachteile:
+
+* sie laufen automatisch im Hintergrund
+* sie können Performance verschlechtern
+* sie sind schwerer zu debuggen
+* sie können unerwartete Seiteneffekte haben
+* sie können andere Trigger auslösen
+* sie machen Datenänderungen weniger transparent
+
+### Merksatz
+
+Trigger sollten kurz, klar und kontrollierbar bleiben.
+
+---
+
+# 17. Häufige Fehler
+
+## 17.1 Trigger nur für eine Zeile schreiben
+
+Falsch gedacht:
+
+```text
+Ein Trigger läuft nur für eine Zeile.
+```
+
+Richtig:
+
+Ein Trigger läuft pro Statement, nicht pro Zeile.
+
+Wenn ein `UPDATE` 100 Zeilen ändert, enthält `inserted` oder `deleted` 100 Zeilen.
+
+Deshalb sollte man Trigger immer mengenbasiert schreiben.
+
+---
+
+## 17.2 Einzelne Variable statt inserted verwenden
+
+Problematisch:
+
+```sql
+DECLARE @kunden_id INT;
+
+SELECT @kunden_id = kunden_id
+FROM inserted;
+```
+
+Wenn mehrere Zeilen eingefügt wurden, kann das zu falschen Ergebnissen führen.
+
+Besser:
+
+```sql
+INSERT INTO kunden_log (kunden_id, aktion, datum)
+SELECT
+    kunden_id,
+    'INSERT',
+    GETDATE()
+FROM inserted;
+```
+
+---
+
+## 17.3 Zu komplexe Business-Logik im Trigger
+
+Trigger sollten nicht zu viele komplexe Prozesse enthalten.
+
+Besser ist oft:
+
+* Stored Procedure
+* Application Logic
+* klare Constraints
+* Foreign Keys
+* Check Constraints
+
+---
+
+# 18. Praktisches Komplettbeispiel: Audit Trigger
+
+```sql
+CREATE TABLE kunden_audit (
+    audit_id INT IDENTITY PRIMARY KEY,
+    kunden_id INT,
+    alte_email VARCHAR(100),
+    neue_email VARCHAR(100),
+    aktion VARCHAR(20),
+    geaendert_am DATETIME
+);
+```
+
+```sql
+CREATE TRIGGER trg_kunden_audit_email
+ON kunden
+AFTER UPDATE
+AS
+BEGIN
+    INSERT INTO kunden_audit (
+        kunden_id,
+        alte_email,
+        neue_email,
+        aktion,
+        geaendert_am
+    )
+    SELECT
+        d.kunden_id,
+        d.email,
+        i.email,
+        'UPDATE',
+        GETDATE()
+    FROM deleted d
+    INNER JOIN inserted i
+    ON d.kunden_id = i.kunden_id
+    WHERE d.email <> i.email;
+END;
+```
+
+### Erklärung
+
+Dieser Trigger:
+
+* reagiert auf Änderungen in `kunden`,
+* vergleicht alte und neue E-Mail-Adresse,
+* speichert Änderungen in `kunden_audit`,
+* verwendet `deleted` für alte Werte,
+* verwendet `inserted` für neue Werte.
+
+---
+
+# 19. Mini-Übersicht
+
+| Begriff              | Bedeutung                         |
+| -------------------- | --------------------------------- |
+| `Trigger`            | automatisch ausgeführter SQL-Code |
+| `AFTER Trigger`      | läuft nach einer Aktion           |
+| `INSTEAD OF Trigger` | ersetzt eine Aktion               |
+| `DDL Trigger`        | reagiert auf Strukturänderungen   |
+| `inserted`           | enthält neue Werte                |
+| `deleted`            | enthält alte Werte                |
+| `ALTER TRIGGER`      | ändert einen Trigger              |
+| `DROP TRIGGER`       | löscht einen Trigger              |
+| `DISABLE TRIGGER`    | deaktiviert einen Trigger         |
+| `ENABLE TRIGGER`     | aktiviert einen Trigger           |
+
+---
+
+# 20. Merksätze
+
+* Trigger laufen automatisch bei bestimmten Ereignissen.
+* Häufige Trigger-Ereignisse sind `INSERT`, `UPDATE` und `DELETE`.
+* `AFTER Trigger` laufen nach der Aktion.
+* `INSTEAD OF Trigger` ersetzen die eigentliche Aktion.
+* `inserted` enthält neue Werte.
+* `deleted` enthält alte Werte.
+* Bei `UPDATE` gibt es alte und neue Werte.
+* Trigger laufen pro SQL-Statement, nicht pro einzelner Zeile.
+* Trigger sind nützlich für Logging, Auditing und automatische Prüfungen.
+* Trigger sollten nicht zu komplex werden.
+
+
+# SQL Zusammenfassung – Teil 23: TCL und DCL
+
+## 1. Überblick
+
+Neben `DDL`, `DML` und `DQL` gibt es auch:
+
+| Kategorie | Bedeutung                    | Befehle                           |
+| --------- | ---------------------------- | --------------------------------- |
+| `TCL`     | Transaction Control Language | `COMMIT`, `ROLLBACK`, `SAVEPOINT` |
+| `DCL`     | Data Control Language        | `GRANT`, `REVOKE`                 |
+
+---
+
+# 2. TCL – Transaction Control Language
+
+`TCL` wird verwendet, um Transaktionen zu steuern.
+
+Eine Transaktion ist eine Gruppe von SQL-Befehlen, die zusammengehören.
+
+Entweder werden alle Änderungen gespeichert oder keine.
+
+Typische TCL-Befehle:
+
+* `COMMIT`
+* `ROLLBACK`
+* `SAVEPOINT`
+
+---
+
+## 3. Was ist eine Transaction?
+
+Eine `Transaction` ist eine logische Einheit von mehreren SQL-Befehlen.
+
+Beispiel: Geldüberweisung
+
+```text
+1. Geld von Konto A abziehen
+2. Geld auf Konto B hinzufügen
+```
+
+Beide Schritte müssen zusammen funktionieren.
+
+Wenn Schritt 1 funktioniert, aber Schritt 2 fehlschlägt, darf die Änderung nicht gespeichert werden.
+
+Deshalb verwendet man eine Transaction.
+
+---
+
+## 4. COMMIT
+
+`COMMIT` speichert alle Änderungen einer Transaktion dauerhaft.
+
+### Allgemeine Struktur
+
+```sql
+BEGIN TRANSACTION;
+
+-- SQL-Befehle
+
+COMMIT;
+```
+
+### Beispiel
+
+```sql
+BEGIN TRANSACTION;
+
+UPDATE konten
+SET kontostand = kontostand - 100
+WHERE konto_id = 1;
+
+UPDATE konten
+SET kontostand = kontostand + 100
+WHERE konto_id = 2;
+
+COMMIT;
+```
+
+### Erklärung
+
+Dieser Code:
+
+* zieht `100` von Konto 1 ab
+* fügt `100` zu Konto 2 hinzu
+* speichert beide Änderungen dauerhaft mit `COMMIT`
+
+---
+
+## 5. ROLLBACK
+
+`ROLLBACK` macht Änderungen einer Transaktion rückgängig.
+
+### Allgemeine Struktur
+
+```sql
+BEGIN TRANSACTION;
+
+-- SQL-Befehle
+
+ROLLBACK;
+```
+
+### Beispiel
+
+```sql
+BEGIN TRANSACTION;
+
+UPDATE konten
+SET kontostand = kontostand - 100
+WHERE konto_id = 1;
+
+UPDATE konten
+SET kontostand = kontostand + 100
+WHERE konto_id = 2;
+
+ROLLBACK;
+```
+
+### Erklärung
+
+Die Änderungen werden nicht gespeichert.
+
+Die Datenbank geht zurück zum Zustand vor der Transaktion.
+
+---
+
+## 6. COMMIT vs ROLLBACK
+
+| Befehl     | Bedeutung                      |
+| ---------- | ------------------------------ |
+| `COMMIT`   | speichert Änderungen dauerhaft |
+| `ROLLBACK` | macht Änderungen rückgängig    |
+
+---
+
+## 7. Typischer Use Case für COMMIT und ROLLBACK
+
+### Beispiel mit Fehlerbehandlung
+
+```sql
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    UPDATE konten
+    SET kontostand = kontostand - 100
+    WHERE konto_id = 1;
+
+    UPDATE konten
+    SET kontostand = kontostand + 100
+    WHERE konto_id = 2;
+
+    COMMIT;
+END TRY
+BEGIN CATCH
+    ROLLBACK;
+
+    SELECT ERROR_MESSAGE() AS fehler;
+END CATCH;
+```
+
+### Erklärung
+
+Wenn kein Fehler passiert:
+
+```sql
+COMMIT;
+```
+
+Wenn ein Fehler passiert:
+
+```sql
+ROLLBACK;
+```
+
+---
+
+## 8. SAVEPOINT
+
+Mit `SAVEPOINT` kann man innerhalb einer Transaktion einen Zwischenspeicherpunkt setzen.
+
+Dann kann man später nur bis zu diesem Punkt zurückgehen.
+
+### Allgemeine Struktur
+
+```sql
+BEGIN TRANSACTION;
+
+-- Schritt 1
+
+SAVEPOINT savepoint_name;
+
+-- Schritt 2
+
+ROLLBACK TO SAVEPOINT savepoint_name;
+
+COMMIT;
+```
+
+### Hinweis zu SQL Server
+
+In SQL Server heißt es meistens:
+
+```sql
+SAVE TRANSACTION savepoint_name;
+```
+
+Und zurückrollen:
+
+```sql
+ROLLBACK TRANSACTION savepoint_name;
+```
+
+---
+
+## 9. SAVEPOINT Beispiel
+
+```sql
+BEGIN TRANSACTION;
+
+UPDATE produkte
+SET preis = preis * 1.10
+WHERE kategorie = 'Laptop';
+
+SAVE TRANSACTION nach_laptops;
+
+UPDATE produkte
+SET preis = preis * 1.50
+WHERE kategorie = 'Maus';
+
+ROLLBACK TRANSACTION nach_laptops;
+
+COMMIT;
+```
+
+### Erklärung
+
+Dieser Code:
+
+* erhöht zuerst Laptop-Preise um 10 %
+* setzt danach einen Savepoint
+* erhöht Maus-Preise um 50 %
+* macht nur die Änderung nach dem Savepoint rückgängig
+* speichert die Laptop-Änderung mit `COMMIT`
+
+---
+
+## 10. Autocommit
+
+Viele Datenbanksysteme arbeiten standardmäßig mit `Autocommit`.
+
+Das bedeutet:
+
+Jeder einzelne SQL-Befehl wird automatisch gespeichert.
+
+Beispiel:
+
+```sql
+UPDATE kunden
+SET stadt = 'Köln'
+WHERE kunden_id = 1;
+```
+
+Wenn `Autocommit` aktiv ist, wird dieser Befehl automatisch gespeichert.
+
+Wenn man mehrere Befehle zusammen kontrollieren möchte, verwendet man eine explizite Transaktion:
+
+```sql
+BEGIN TRANSACTION;
+
+-- mehrere SQL-Befehle
+
+COMMIT;
+```
+
+---
+
+## 11. Wann verwendet man TCL?
+
+TCL verwendet man, wenn mehrere Änderungen zusammengehören.
+
+Typische Use Cases:
+
+| Use Case             | Warum Transaction?                                                 |
+| -------------------- | ------------------------------------------------------------------ |
+| Geldüberweisung      | Abbuchung und Einzahlung müssen zusammen passieren                 |
+| Bestellung erstellen | Bestellung und Bestellpositionen gehören zusammen                  |
+| Batch-Update         | Viele Änderungen sollen komplett oder gar nicht gespeichert werden |
+| Datenimport          | Bei Fehler soll der Import zurückgerollt werden                    |
+| Kritische Änderungen | Fehler dürfen keine halbfertigen Daten erzeugen                    |
+
+---
+
+# 12. DCL – Data Control Language
+
+`DCL` wird verwendet, um Rechte und Berechtigungen in der Datenbank zu steuern.
+
+Wichtige DCL-Befehle:
+
+* `GRANT`
+* `REVOKE`
+
+Zusätzlich gibt es in manchen Systemen, zum Beispiel SQL Server:
+
+* `DENY`
+
+---
+
+## 13. GRANT
+
+`GRANT` gibt einem Benutzer oder einer Rolle bestimmte Rechte.
+
+### Allgemeine Struktur
+
+```sql
+GRANT rechte
+ON objekt
+TO benutzer_oder_rolle;
+```
+
+---
+
+## 14. GRANT Beispiel: SELECT-Recht
+
+```sql
+GRANT SELECT
+ON kunden
+TO analyst_user;
+```
+
+### Erklärung
+
+Der Benutzer `analyst_user` darf Daten aus der Tabelle `kunden` lesen.
+
+---
+
+## 15. GRANT mehrere Rechte
+
+```sql
+GRANT SELECT, INSERT, UPDATE
+ON kunden
+TO app_user;
+```
+
+### Erklärung
+
+Der Benutzer `app_user` darf:
+
+* Daten lesen
+* Daten einfügen
+* Daten ändern
+
+---
+
+## 16. GRANT auf Stored Procedure
+
+```sql
+GRANT EXECUTE
+ON OBJECT::get_customers_by_city
+TO app_user;
+```
+
+### Erklärung
+
+Der Benutzer `app_user` darf die Stored Procedure `get_customers_by_city` ausführen.
+
+Das ist nützlich, wenn Benutzer eine Procedure ausführen dürfen, aber keinen direkten Zugriff auf die Tabellen bekommen sollen.
+
+---
+
+## 17. Häufige Rechte
+
+| Recht     | Bedeutung                                |
+| --------- | ---------------------------------------- |
+| `SELECT`  | Daten lesen                              |
+| `INSERT`  | Daten einfügen                           |
+| `UPDATE`  | Daten ändern                             |
+| `DELETE`  | Daten löschen                            |
+| `EXECUTE` | Stored Procedure oder Function ausführen |
+| `ALTER`   | Objekt ändern                            |
+| `CONTROL` | umfassende Kontrolle über ein Objekt     |
+
+---
+
+## 18. REVOKE
+
+`REVOKE` entfernt zuvor vergebene Rechte.
+
+### Allgemeine Struktur
+
+```sql
+REVOKE rechte
+ON objekt
+FROM benutzer_oder_rolle;
+```
+
+---
+
+## 19. REVOKE Beispiel
+
+```sql
+REVOKE UPDATE
+ON kunden
+FROM app_user;
+```
+
+### Erklärung
+
+Der Benutzer `app_user` verliert das Recht, die Tabelle `kunden` zu ändern.
+
+---
+
+## 20. REVOKE mehrere Rechte
+
+```sql
+REVOKE SELECT, INSERT
+ON kunden
+FROM app_user;
+```
+
+### Erklärung
+
+Dem Benutzer werden `SELECT` und `INSERT` auf der Tabelle `kunden` entzogen.
+
+---
+
+## 21. GRANT vs REVOKE
+
+| Befehl   | Bedeutung       |
+| -------- | --------------- |
+| `GRANT`  | gibt Rechte     |
+| `REVOKE` | entfernt Rechte |
+
+---
+
+## 22. DENY
+
+`DENY` gibt es besonders in SQL Server.
+
+`DENY` verbietet ein Recht ausdrücklich.
+
+```sql
+DENY SELECT
+ON kunden
+TO test_user;
+```
+
+### Unterschied zwischen REVOKE und DENY
+
+| Befehl   | Bedeutung                                |
+| -------- | ---------------------------------------- |
+| `REVOKE` | entfernt eine Berechtigung               |
+| `DENY`   | verbietet eine Berechtigung ausdrücklich |
+
+### Wichtig
+
+`DENY` ist stärker als `GRANT`.
+
+Wenn ein Benutzer über eine Rolle ein Recht bekommt, aber direkt ein `DENY` hat, gewinnt meistens `DENY`.
+
+---
+
+# 23. Rollen
+
+In der Praxis gibt man Rechte oft nicht direkt an einzelne Benutzer, sondern an Rollen.
+
+### Beispiel
+
+```sql
+CREATE ROLE reporting_role;
+```
+
+Recht an Rolle geben:
+
+```sql
+GRANT SELECT
+ON kunden_report
+TO reporting_role;
+```
+
+Benutzer zur Rolle hinzufügen:
+
+```sql
+ALTER ROLE reporting_role
+ADD MEMBER analyst_user;
+```
+
+### Vorteil
+
+Man muss Rechte nicht für jeden Benutzer einzeln verwalten.
+
+---
+
+# 24. Typische DCL Use Cases
+
+| Use Case                          | Beispiel                                |
+| --------------------------------- | --------------------------------------- |
+| Analyst darf nur lesen            | `GRANT SELECT`                          |
+| App darf Daten schreiben          | `GRANT INSERT, UPDATE`                  |
+| Benutzer darf Procedure ausführen | `GRANT EXECUTE`                         |
+| Zugriff wieder entfernen          | `REVOKE SELECT`                         |
+| Sensible Tabelle schützen         | Rechte nur auf View geben               |
+| Rollenbasierte Rechte             | Rechte an Rolle statt Benutzer vergeben |
+
+---
+
+## 25. Beispiel: Zugriff über View statt Tabelle
+
+Manchmal soll ein Benutzer nicht alle Spalten einer Tabelle sehen.
+
+Tabelle `kunden` enthält:
+
+| kunden_id | name | email | telefon | gehalt |
+| --------- | ---- | ----- | ------- | -----: |
+
+Der Benutzer soll `gehalt` nicht sehen.
+
+### View erstellen
+
+```sql
+CREATE VIEW kunden_public AS
+SELECT
+    kunden_id,
+    name,
+    email,
+    telefon
+FROM kunden;
+```
+
+### Recht auf View geben
+
+```sql
+GRANT SELECT
+ON kunden_public
+TO analyst_user;
+```
+
+### Optional: direkten Tabellenzugriff entziehen
+
+```sql
+REVOKE SELECT
+ON kunden
+FROM analyst_user;
+```
+
+### Erklärung
+
+Der Benutzer darf nur die View sehen, aber nicht direkt die Tabelle mit der sensiblen Spalte.
+
+---
+
+# 26. TCL vs DCL
+
+| Kategorie | Zweck                 | Beispiele                         |
+| --------- | --------------------- | --------------------------------- |
+| `TCL`     | steuert Transaktionen | `COMMIT`, `ROLLBACK`, `SAVEPOINT` |
+| `DCL`     | steuert Rechte        | `GRANT`, `REVOKE`                 |
+
+---
+
+# 27. Praktisches Komplettbeispiel
+
+## 27.1 TCL Beispiel
+
+```sql
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    INSERT INTO bestellungen (kunden_id, bestelldatum)
+    VALUES (1, GETDATE());
+
+    UPDATE kunden
+    SET letzte_bestellung = GETDATE()
+    WHERE kunden_id = 1;
+
+    COMMIT;
+END TRY
+BEGIN CATCH
+    ROLLBACK;
+
+    SELECT ERROR_MESSAGE() AS fehler;
+END CATCH;
+```
+
+### Erklärung
+
+Dieser Code:
+
+* erstellt eine Bestellung
+* aktualisiert den Kunden
+* speichert beide Änderungen nur, wenn alles funktioniert
+* macht bei Fehlern alles rückgängig
+
+---
+
+## 27.2 DCL Beispiel
+
+```sql
+GRANT SELECT
+ON kunden_report
+TO reporting_role;
+
+GRANT EXECUTE
+ON OBJECT::get_customer_report
+TO reporting_role;
+
+REVOKE UPDATE
+ON kunden
+FROM reporting_role;
+```
+
+### Erklärung
+
+Dieser Code:
+
+* erlaubt Lesen auf `kunden_report`
+* erlaubt Ausführen der Procedure `get_customer_report`
+* entfernt Änderungsrechte auf `kunden`
+
+---
+
+# 28. Mini-Übersicht
+
+| Befehl              | Kategorie        | Bedeutung                      |
+| ------------------- | ---------------- | ------------------------------ |
+| `BEGIN TRANSACTION` | TCL              | startet eine Transaktion       |
+| `COMMIT`            | TCL              | speichert Änderungen dauerhaft |
+| `ROLLBACK`          | TCL              | macht Änderungen rückgängig    |
+| `SAVEPOINT`         | TCL              | setzt einen Zwischenpunkt      |
+| `GRANT`             | DCL              | gibt Rechte                    |
+| `REVOKE`            | DCL              | entfernt Rechte                |
+| `DENY`              | DCL / SQL Server | verbietet Rechte ausdrücklich  |
+
+---
+
+# 29. Merksätze
+
+* `TCL` steuert Transaktionen.
+* Eine Transaktion fasst mehrere SQL-Befehle logisch zusammen.
+* `COMMIT` speichert Änderungen dauerhaft.
+* `ROLLBACK` macht Änderungen rückgängig.
+* `SAVEPOINT` erlaubt teilweises Zurückrollen.
+* `DCL` steuert Benutzerrechte.
+* `GRANT` gibt Rechte.
+* `REVOKE` entfernt Rechte.
+* Rechte werden oft über Rollen verwaltet.
+* Für sensible Daten kann man Views verwenden und nur auf diese Views Rechte geben.
+
+
+
+
